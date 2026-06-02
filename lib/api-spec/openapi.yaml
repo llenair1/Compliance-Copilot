@@ -1,6 +1,5 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
   description: API specification
@@ -10,6 +9,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: compliance
+    description: NIST CSF 2.0 compliance evaluation
 paths:
   /healthz:
     get:
@@ -24,6 +25,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /analyze:
+    post:
+      operationId: analyzePolicy
+      tags: [compliance]
+      summary: Analyze policy document
+      description: Evaluates a policy document against 10 NIST CSF 2.0 subcategories using OpenAI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzePolicyRequest"
+      responses:
+        "200":
+          description: Analysis complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzePolicyResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +65,56 @@ components:
           type: string
       required:
         - status
-
+    AnalyzePolicyRequest:
+      type: object
+      properties:
+        policyText:
+          type: string
+          description: The policy document text to evaluate
+      required:
+        - policyText
+    ControlResult:
+      type: object
+      properties:
+        id:
+          type: string
+          description: NIST CSF 2.0 control ID
+        name:
+          type: string
+          description: Control name
+        description:
+          type: string
+          description: NIST control description
+        status:
+          type: string
+          enum: [Met, "Partially Met", "Not Found"]
+          description: Compliance status
+        rationale:
+          type: string
+          description: One-sentence rationale for the assessment
+      required:
+        - id
+        - name
+        - description
+        - status
+        - rationale
+    AnalyzePolicyResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/ControlResult"
+        overallScore:
+          type: number
+          description: Overall compliance score 0-100
+      required:
+        - results
+        - overallScore
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
