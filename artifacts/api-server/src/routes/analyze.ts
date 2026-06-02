@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import OpenAI from "openai";
+import OpenAI, { APIError } from "openai";
 
 const router: IRouter = Router();
 
@@ -106,48 +106,67 @@ Respond ONLY with a valid JSON object containing a "results" array. Each element
 Example format:
 {"results": [{"id": "ID.AM", "status": "Met", "rationale": "The policy explicitly defines an asset inventory process covering hardware, software, and data assets."}, ...]}`;
 
-  const response = await client.chat.completions.create({
-    model: "gpt-4o",
-    messages: [{ role: "user", content: prompt }],
-    response_format: { type: "json_object" },
-    temperature: 0.2,
-  });
+  try {
+    const response = await client.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      temperature: 0.2,
+    });
 
-  const raw = response.choices[0].message.content ?? "{}";
-  const parsed = JSON.parse(raw) as {
-    results?: Array<{ id: string; status: string; rationale: string }>;
-  };
-
-  const resultsList = parsed.results ?? [];
-  const resultById = Object.fromEntries(resultsList.map((r) => [r.id, r]));
-
-  const STATUS_SCORES: Record<string, number> = {
-    Met: 1.0,
-    "Partially Met": 0.5,
-    "Not Found": 0.0,
-  };
-
-  const finalResults = NIST_CONTROLS.map((ctrl) => {
-    const match = resultById[ctrl.id] ?? {};
-    return {
-      id: ctrl.id,
-      name: ctrl.name,
-      description: ctrl.description,
-      status: (match.status as string) || "Not Found",
-      rationale: match.rationale || "No rationale provided.",
+    const raw = response.choices[0].message.content ?? "{}";
+    const parsed = JSON.parse(raw) as {
+      results?: Array<{ id: string; status: string; rationale: string }>;
     };
-  });
 
-  const totalScore =
-    finalResults.reduce(
-      (sum, r) => sum + (STATUS_SCORES[r.status] ?? 0),
-      0,
-    ) / finalResults.length;
+    const resultsList = parsed.results ?? [];
+    const resultById = Object.fromEntries(resultsList.map((r) => [r.id, r]));
 
-  res.json({
-    results: finalResults,
-    overallScore: Math.round(totalScore * 1000) / 10,
-  });
+    const STATUS_SCORES: Record<string, number> = {
+      Met: 1.0,
+      "Partially Met": 0.5,
+      "Not Found": 0.0,
+    };
+
+    const finalResults = NIST_CONTROLS.map((ctrl) => {
+      const match = resultById[ctrl.id] ?? {};
+      return {
+        id: ctrl.id,
+        name: ctrl.name,
+        description: ctrl.description,
+        status: (match.status as string) || "Not Found",
+        rationale: match.rationale || "No rationale provided.",
+      };
+    });
+
+    const totalScore =
+      finalResults.reduce(
+        (sum, r) => sum + (STATUS_SCORES[r.status] ?? 0),
+        0,
+      ) / finalResults.length;
+
+    res.json({
+      results: finalResults,
+      overallScore: Math.round(totalScore * 1000) / 10,
+    });
+  } catch (err) {
+    if (err instanceof APIError) {
+      const status = err.status ?? 500;
+      let message = "OpenAI API error. Please try again.";
+      if (status === 401) {
+        message =
+          "Invalid OpenAI API key. Please check the OPENAI_API_KEY secret.";
+      } else if (status === 429) {
+        message =
+          "OpenAI quota exceeded. Please add billing credits at platform.openai.com/settings/billing.";
+      } else if (status === 503 || status === 529) {
+        message = "OpenAI is temporarily overloaded. Please try again shortly.";
+      }
+      res.status(status < 500 ? status : 502).json({ error: message });
+    } else {
+      res.status(500).json({ error: "An unexpected server error occurred." });
+    }
+  }
 });
 
 export default router;
