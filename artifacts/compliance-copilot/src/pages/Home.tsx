@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { AlertCircle, CheckCircle, MinusCircle, Shield, Download, ChevronDown, ChevronUp } from "lucide-react";
+import { AlertCircle, CheckCircle, MinusCircle, Shield, Download, ChevronDown, ChevronUp, FileText, Upload, X } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -84,7 +84,7 @@ function buildReport(results: ControlResult[], score: number): string {
     lines.push("", "", "GAP RECOMMENDATIONS", "-".repeat(60));
     gaps.forEach(g => {
       const priority = g.status === "Not Found" ? "HIGH" : "MEDIUM";
-      lines.push(`[${priority}] ${g.id} — ${g.name}: ${g.rationale}`);
+      lines.push(`[${priority}] ${g.id} - ${g.name}: ${g.rationale}`);
     });
   }
 
@@ -93,15 +93,23 @@ function buildReport(results: ControlResult[], score: number): string {
 
 export default function Home() {
   const [policyText, setPolicyText] = useState("");
+  const [policyPdf, setPolicyPdf] = useState<File | null>(null);
   const [report, setReport] = useState<AnalyzeResponse | null>(null);
 
-  const mutation = useMutation<AnalyzeResponse, Error, string>({
-    mutationFn: async (text: string) => {
-      const res = await fetch(`${BASE}/api/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ policyText: text }),
-      });
+  const mutation = useMutation<AnalyzeResponse, Error, { text?: string; pdf?: File }>({
+    mutationFn: async ({ text, pdf }) => {
+      const res = pdf
+        ? await fetch(`${BASE}/api/analyze/pdf`, {
+            method: "POST",
+            headers: { "Content-Type": "application/pdf" },
+            body: pdf,
+          })
+        : await fetch(`${BASE}/api/analyze`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ policyText: text }),
+          });
+
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Unknown error" }));
         throw new Error(err.error ?? "Analysis failed");
@@ -112,9 +120,16 @@ export default function Home() {
   });
 
   const handleAnalyze = () => {
+    if (policyPdf) {
+      mutation.mutate({ pdf: policyPdf });
+      return;
+    }
+
     if (policyText.trim().length < 50) return;
-    mutation.mutate(policyText);
+    mutation.mutate({ text: policyText });
   };
+
+  const hasAnalyzableInput = Boolean(policyPdf) || policyText.trim().length >= 50;
 
   const handleDownload = () => {
     if (!report) return;
@@ -150,18 +165,57 @@ export default function Home() {
 
         {/* Input */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Paste Your Policy Document</label>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <label className="block text-sm font-semibold text-gray-700">Policy Document</label>
+            <label className="inline-flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 cursor-pointer transition-colors">
+              <Upload className="w-4 h-4" />
+              Upload PDF
+              <input
+                className="sr-only"
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setPolicyPdf(file);
+                  if (file) {
+                    setReport(null);
+                  }
+                }}
+              />
+            </label>
+          </div>
           <textarea
             className="w-full h-52 rounded-lg border border-gray-300 p-3 text-sm text-gray-800 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-400"
             placeholder="Paste your information security policy, data protection policy, incident response plan, or any compliance document here..."
             value={policyText}
-            onChange={e => setPolicyText(e.target.value)}
+            onChange={e => {
+              setPolicyText(e.target.value);
+              if (e.target.value.trim()) {
+                setPolicyPdf(null);
+              }
+            }}
           />
+          {policyPdf && (
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
+              <div className="flex items-center gap-2 min-w-0 text-blue-900">
+                <FileText className="w-4 h-4 shrink-0" />
+                <span className="truncate">{policyPdf.name}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPolicyPdf(null)}
+                className="shrink-0 rounded-md p-1 text-blue-700 hover:bg-blue-100"
+                aria-label="Remove selected PDF"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
           <div className="flex items-center justify-between mt-3">
-            <p className="text-xs text-gray-400">Analysis typically takes 10–20 seconds. Powered by GPT-4o.</p>
+            <p className="text-xs text-gray-400">Analysis typically takes 10-20 seconds. Powered by GPT-4o.</p>
             <button
               onClick={handleAnalyze}
-              disabled={mutation.isPending || policyText.trim().length < 50}
+              disabled={mutation.isPending || !hasAnalyzableInput}
               className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
             >
               {mutation.isPending ? (
@@ -170,13 +224,13 @@ export default function Home() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  Analyzing…
+                  Analyzing...
                 </>
-              ) : "🔍 Analyze Policy"}
+              ) : "Analyze Policy"}
             </button>
           </div>
           {mutation.isError && (
-            <p className="mt-2 text-sm text-red-600">⚠ {mutation.error.message}</p>
+            <p className="mt-2 text-sm text-red-600">{mutation.error.message}</p>
           )}
         </div>
 
@@ -220,14 +274,14 @@ export default function Home() {
             {/* Gap recommendations */}
             {gaps > 0 && (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                <h2 className="text-base font-semibold text-gray-900 mb-3">🔧 Gap Recommendations</h2>
+                <h2 className="text-base font-semibold text-gray-900 mb-3">Gap Recommendations</h2>
                 <ul className="space-y-2">
                   {report.results.filter(r => r.status !== "Met").map(g => (
                     <li key={g.id} className="flex gap-2 text-sm">
                       <span className={`shrink-0 font-semibold px-1.5 py-0.5 rounded text-xs ${g.status === "Not Found" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
                         {g.status === "Not Found" ? "HIGH" : "MED"}
                       </span>
-                      <span><span className="font-semibold text-gray-800">{g.id} — {g.name}:</span>{" "}<span className="text-gray-600">{g.rationale}</span></span>
+                      <span><span className="font-semibold text-gray-800">{g.id} - {g.name}:</span>{" "}<span className="text-gray-600">{g.rationale}</span></span>
                     </li>
                   ))}
                 </ul>
